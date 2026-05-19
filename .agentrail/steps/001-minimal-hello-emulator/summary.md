@@ -1,0 +1,1 @@
+Added a minimal RV32I emulator MVP that assembles hello-world source, loads it into memory, executes addi, sb, and ebreak, and verifies memory at 0x100 contains hello newline.
