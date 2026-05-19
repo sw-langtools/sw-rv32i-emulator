@@ -1,8 +1,9 @@
 number = 5
 slug = "cli-hello-demo"
-status = "in-progress"
+status = "completed"
 description = "Add a CLI example for the MVP hello-world path. Create examples/asm/hello.s a..."
 role = "production"
 context_files = []
 created_at = "2026-05-19T13:47:16"
-commits = []
+completed_at = "2026-05-19T13:49:06"
+commits = ["c37936a53a3af7d2db069f2061d575edaa39d66b"]

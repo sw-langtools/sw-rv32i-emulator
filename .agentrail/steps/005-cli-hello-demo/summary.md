@@ -1,0 +1,1 @@
+Added a CLI hello-world demo that assembles examples/asm/hello.s, prints source, assembled bytes, decoded/disassembled intermediate instructions, load/execution trace, final CPU state, memory dump, and emulator output.
