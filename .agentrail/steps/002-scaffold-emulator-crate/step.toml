@@ -1,6 +1,6 @@
 number = 2
 slug = "scaffold-emulator-crate"
-status = "pending"
+status = "in-progress"
 description = "Scaffold the sw-rv32i-emulator Rust crate after sw-rv32i-isa has a usable reg..."
 role = "production"
 context_files = []
