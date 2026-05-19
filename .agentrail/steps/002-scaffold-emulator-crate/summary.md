@@ -1,0 +1,1 @@
+Completed the emulator scaffold step by documenting the existing Cargo crate and intentional MVP scope in README.md while preserving the minimal hello-world execution subset.
