@@ -1,6 +1,6 @@
 number = 5
 slug = "cli-hello-demo"
-status = "pending"
+status = "in-progress"
 description = "Add a CLI example for the MVP hello-world path. Create examples/asm/hello.s a..."
 role = "production"
 context_files = []
