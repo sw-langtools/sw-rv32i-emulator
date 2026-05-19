@@ -1,0 +1,1 @@
+Add human-readable dump helpers for CPU state and memory. Expose public helpers similar to format_cpu_state and format_hex_dump, keeping library code deterministic and free of direct terminal output. Add tests that lock down compact, stable output suitable for examples and future browser demos.

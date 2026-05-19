@@ -1,0 +1,8 @@
+number = 7
+slug = "byte-loaded-examples-and-tests"
+status = "pending"
+description = "Add byte-loaded emulator tests and examples that do not require the assembler..."
+role = "production"
+context_files = []
+created_at = "2026-05-18T19:08:25"
+commits = []

@@ -1,0 +1,8 @@
+number = 8
+slug = "assembler-backed-examples"
+status = "pending"
+description = "After sw-rv32i-asm exists, replace or augment byte fixtures with source-drive..."
+role = "production"
+context_files = []
+created_at = "2026-05-18T19:08:29"
+commits = []

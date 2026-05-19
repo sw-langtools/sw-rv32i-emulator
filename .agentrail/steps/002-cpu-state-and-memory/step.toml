@@ -1,0 +1,8 @@
+number = 2
+slug = "cpu-state-and-memory"
+status = "pending"
+description = "Implement CpuState and Memory for RV32I execution. CpuState should track 32 u..."
+role = "production"
+context_files = []
+created_at = "2026-05-18T19:08:02"
+commits = []

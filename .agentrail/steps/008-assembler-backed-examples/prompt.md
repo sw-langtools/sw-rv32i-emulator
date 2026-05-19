@@ -1,0 +1,1 @@
+After sw-rv32i-asm exists, replace or augment byte fixtures with source-driven examples. Load source from examples/asm/*.s, assemble it with sw-rv32i-asm, print source/listing/bytes, run in the emulator, and inspect final CPU state and memory changes. Add integration tests that prove at least one assembled program runs end to end without external RISC-V tools.
