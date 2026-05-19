@@ -186,6 +186,12 @@ pub enum ExecError {
     MisalignedFetch,
     MisalignedDataAccess,
     UnsupportedInstruction,
+    RunLimitReached,
+}
+
+pub fn fetch_decode(cpu: &CpuState, mem: &Memory) -> Result<Instruction, ExecError> {
+    let word = mem.fetch_u32(cpu.pc())?;
+    sw_rv32i_isa::decode_word(word).map_err(|_| ExecError::Decode)
 }
 
 pub fn step(cpu: &mut CpuState, mem: &mut Memory) -> Result<(), ExecError> {
@@ -193,8 +199,7 @@ pub fn step(cpu: &mut CpuState, mem: &mut Memory) -> Result<(), ExecError> {
         return Err(ExecError::Halted);
     }
 
-    let word = mem.fetch_u32(cpu.pc)?;
-    let insn = sw_rv32i_isa::decode_word(word).map_err(|_| ExecError::Decode)?;
+    let insn = fetch_decode(cpu, mem)?;
     cpu.advance_pc(4);
 
     let result = match insn {
@@ -234,6 +239,9 @@ pub fn run(cpu: &mut CpuState, mem: &mut Memory, max_steps: usize) -> Result<usi
     while !cpu.halted && steps < max_steps {
         step(cpu, mem)?;
         steps += 1;
+    }
+    if !cpu.halted {
+        return Err(ExecError::RunLimitReached);
     }
     Ok(steps)
 }
@@ -300,6 +308,7 @@ mod tests {
     fn runs_assembled_hello_world_to_memory() {
         let (cpu, mem, steps) = assemble_load_run(HELLO_SOURCE, 512, 100).unwrap();
         assert!(cpu.halted());
+        assert_eq!(cpu.instr_count(), 13);
         assert_eq!(steps, 13);
         assert_eq!(mem.bytes(0x100..0x106), b"hello\n");
     }
@@ -367,5 +376,57 @@ mod tests {
         assert_eq!(mem.read_u32(2), Err(ExecError::MisalignedDataAccess));
         assert_eq!(mem.write_u32(2, 1), Err(ExecError::MisalignedDataAccess));
         assert_eq!(mem.fetch_u32(2), Err(ExecError::MisalignedFetch));
+    }
+
+    #[test]
+    fn fetch_decode_reports_alignment_and_decode_errors() {
+        let mut cpu = CpuState::new();
+        let mut mem = Memory::new(8);
+
+        cpu.set_pc(2);
+        assert_eq!(fetch_decode(&cpu, &mem), Err(ExecError::MisalignedFetch));
+
+        cpu.set_pc(0);
+        mem.write_u32(0, 0).unwrap();
+        assert_eq!(fetch_decode(&cpu, &mem), Err(ExecError::Decode));
+    }
+
+    #[test]
+    fn step_advances_pc_and_counts_only_successful_instructions() {
+        let program = sw_rv32i_asm::assemble(
+            r#"
+            addi x1, x0, 1
+            ebreak
+            "#,
+        )
+        .unwrap();
+        let mut cpu = CpuState::new();
+        let mut mem = Memory::new(32);
+        mem.load(0, &program).unwrap();
+
+        step(&mut cpu, &mut mem).unwrap();
+        assert_eq!(cpu.pc(), 4);
+        assert_eq!(cpu.instr_count(), 1);
+        assert_eq!(cpu.read_reg(Reg::X1), 1);
+
+        step(&mut cpu, &mut mem).unwrap();
+        assert_eq!(cpu.pc(), 8);
+        assert_eq!(cpu.instr_count(), 2);
+        assert!(cpu.halted());
+        assert_eq!(step(&mut cpu, &mut mem), Err(ExecError::Halted));
+        assert_eq!(cpu.instr_count(), 2);
+    }
+
+    #[test]
+    fn run_reports_limit_when_cpu_does_not_halt() {
+        let program = sw_rv32i_asm::assemble("addi x1, x0, 1").unwrap();
+        let mut cpu = CpuState::new();
+        let mut mem = Memory::new(32);
+        mem.load(0, &program).unwrap();
+
+        assert_eq!(run(&mut cpu, &mut mem, 1), Err(ExecError::RunLimitReached));
+        assert_eq!(cpu.pc(), 4);
+        assert_eq!(cpu.instr_count(), 1);
+        assert!(!cpu.halted());
     }
 }
