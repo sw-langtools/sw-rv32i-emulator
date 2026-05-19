@@ -1,4 +1,4 @@
-number = 9
+number = 10
 slug = "assembler-backed-examples"
 status = "pending"
 description = "After sw-rv32i-asm exists, replace or augment byte fixtures with source-drive..."

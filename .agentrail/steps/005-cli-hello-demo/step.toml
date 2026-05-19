@@ -1,0 +1,8 @@
+number = 5
+slug = "cli-hello-demo"
+status = "pending"
+description = "Add a CLI example for the MVP hello-world path. Create examples/asm/hello.s a..."
+role = "production"
+context_files = []
+created_at = "2026-05-19T13:47:16"
+commits = []

@@ -1,4 +1,4 @@
-number = 6
+number = 7
 slug = "execute-loads-stores-system"
 status = "pending"
 description = "Implement RV32I loads, stores, FENCE, ECALL, and EBREAK behavior. Loads and s..."
