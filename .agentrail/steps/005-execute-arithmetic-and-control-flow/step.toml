@@ -1,4 +1,4 @@
-number = 4
+number = 5
 slug = "execute-arithmetic-and-control-flow"
 status = "pending"
 description = "Implement execution for RV32I LUI, AUIPC, JAL, JALR, branches, register-immed..."

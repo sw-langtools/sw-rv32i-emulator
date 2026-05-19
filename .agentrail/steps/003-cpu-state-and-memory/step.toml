@@ -1,4 +1,4 @@
-number = 2
+number = 3
 slug = "cpu-state-and-memory"
 status = "pending"
 description = "Implement CpuState and Memory for RV32I execution. CpuState should track 32 u..."

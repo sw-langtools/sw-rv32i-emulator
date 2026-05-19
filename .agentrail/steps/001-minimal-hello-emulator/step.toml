@@ -1,0 +1,8 @@
+number = 1
+slug = "minimal-hello-emulator"
+status = "pending"
+description = "Create the minimal sw-rv32i-emulator crate needed for the hello-world MVP. Sc..."
+role = "production"
+context_files = []
+created_at = "2026-05-19T11:48:10"
+commits = []

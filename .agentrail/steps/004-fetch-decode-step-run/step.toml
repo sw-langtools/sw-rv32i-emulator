@@ -1,4 +1,4 @@
-number = 3
+number = 4
 slug = "fetch-decode-step-run"
 status = "pending"
 description = "Implement the fetch/decode/step/run execution skeleton using sw-rv32i-isa dec..."

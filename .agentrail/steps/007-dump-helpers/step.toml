@@ -1,4 +1,4 @@
-number = 6
+number = 7
 slug = "dump-helpers"
 status = "pending"
 description = "Add human-readable dump helpers for CPU state and memory. Expose public helpe..."
