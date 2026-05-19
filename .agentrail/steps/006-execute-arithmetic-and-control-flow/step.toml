@@ -1,8 +1,9 @@
 number = 6
 slug = "execute-arithmetic-and-control-flow"
-status = "in-progress"
+status = "completed"
 description = "Implement execution for RV32I LUI, AUIPC, JAL, JALR, branches, register-immed..."
 role = "production"
 context_files = []
 created_at = "2026-05-18T19:08:11"
-commits = []
+completed_at = "2026-05-19T14:05:47"
+commits = ["422b0d10a3f0143320fde9814011be8dee44d920"]

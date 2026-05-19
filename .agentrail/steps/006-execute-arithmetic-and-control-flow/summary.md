@@ -1,0 +1,1 @@
+Implemented RV32I arithmetic, comparison, shift, branch, and jump execution with PC-relative control flow, x0 write protection, wrapping semantics, and focused encoded-instruction tests.
