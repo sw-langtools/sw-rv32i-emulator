@@ -1,6 +1,6 @@
 number = 1
 slug = "minimal-hello-emulator"
-status = "pending"
+status = "in-progress"
 description = "Create the minimal sw-rv32i-emulator crate needed for the hello-world MVP. Sc..."
 role = "production"
 context_files = []
