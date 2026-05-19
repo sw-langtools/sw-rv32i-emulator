@@ -6,6 +6,7 @@ pub struct CpuState {
     regs: [u32; 32],
     pc: u32,
     halted: bool,
+    instr_count: u64,
 }
 
 impl CpuState {
@@ -14,6 +15,7 @@ impl CpuState {
             regs: [0; 32],
             pc: 0,
             halted: false,
+            instr_count: 0,
         }
     }
 
@@ -25,6 +27,22 @@ impl CpuState {
         self.halted
     }
 
+    pub fn set_halted(&mut self, halted: bool) {
+        self.halted = halted;
+    }
+
+    pub fn instr_count(&self) -> u64 {
+        self.instr_count
+    }
+
+    pub fn set_pc(&mut self, pc: u32) {
+        self.pc = pc;
+    }
+
+    pub fn advance_pc(&mut self, bytes: u32) {
+        self.pc = self.pc.wrapping_add(bytes);
+    }
+
     pub fn read_reg(&self, reg: Reg) -> u32 {
         self.regs[reg.index_u8() as usize]
     }
@@ -33,6 +51,14 @@ impl CpuState {
         if reg != Reg::X0 {
             self.regs[reg.index_u8() as usize] = value;
         }
+    }
+
+    pub fn regs(&self) -> &[u32; 32] {
+        &self.regs
+    }
+
+    pub fn increment_instr_count(&mut self) {
+        self.instr_count = self.instr_count.wrapping_add(1);
     }
 }
 
@@ -66,16 +92,39 @@ impl Memory {
         Ok(())
     }
 
-    pub fn read_u32(&self, addr: u32) -> Result<u32, ExecError> {
-        if addr & 0x3 != 0 {
-            return Err(ExecError::MisalignedFetch);
+    pub fn len(&self) -> usize {
+        self.bytes.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.bytes.is_empty()
+    }
+
+    pub fn read_u8(&self, addr: u32) -> Result<u8, ExecError> {
+        self.bytes
+            .get(addr as usize)
+            .copied()
+            .ok_or(ExecError::MemoryOutOfBounds)
+    }
+
+    pub fn read_u16(&self, addr: u32) -> Result<u16, ExecError> {
+        if addr & 0x1 != 0 {
+            return Err(ExecError::MisalignedDataAccess);
         }
         let start = addr as usize;
         let bytes = self
             .bytes
-            .get(start..start + 4)
+            .get(start..start + 2)
             .ok_or(ExecError::MemoryOutOfBounds)?;
-        Ok(u32::from_le_bytes(bytes.try_into().unwrap()))
+        Ok(u16::from_le_bytes(bytes.try_into().unwrap()))
+    }
+
+    pub fn read_u32(&self, addr: u32) -> Result<u32, ExecError> {
+        self.read_aligned_u32(addr, ExecError::MisalignedDataAccess)
+    }
+
+    pub fn fetch_u32(&self, addr: u32) -> Result<u32, ExecError> {
+        self.read_aligned_u32(addr, ExecError::MisalignedFetch)
     }
 
     pub fn write_u8(&mut self, addr: u32, value: u8) -> Result<(), ExecError> {
@@ -84,6 +133,44 @@ impl Memory {
             .get_mut(addr as usize)
             .ok_or(ExecError::MemoryOutOfBounds)? = value;
         Ok(())
+    }
+
+    pub fn write_u16(&mut self, addr: u32, value: u16) -> Result<(), ExecError> {
+        if addr & 0x1 != 0 {
+            return Err(ExecError::MisalignedDataAccess);
+        }
+        let start = addr as usize;
+        let dst = self
+            .bytes
+            .get_mut(start..start + 2)
+            .ok_or(ExecError::MemoryOutOfBounds)?;
+        dst.copy_from_slice(&value.to_le_bytes());
+        Ok(())
+    }
+
+    pub fn write_u32(&mut self, addr: u32, value: u32) -> Result<(), ExecError> {
+        if addr & 0x3 != 0 {
+            return Err(ExecError::MisalignedDataAccess);
+        }
+        let start = addr as usize;
+        let dst = self
+            .bytes
+            .get_mut(start..start + 4)
+            .ok_or(ExecError::MemoryOutOfBounds)?;
+        dst.copy_from_slice(&value.to_le_bytes());
+        Ok(())
+    }
+
+    fn read_aligned_u32(&self, addr: u32, align_error: ExecError) -> Result<u32, ExecError> {
+        if addr & 0x3 != 0 {
+            return Err(align_error);
+        }
+        let start = addr as usize;
+        let bytes = self
+            .bytes
+            .get(start..start + 4)
+            .ok_or(ExecError::MemoryOutOfBounds)?;
+        Ok(u32::from_le_bytes(bytes.try_into().unwrap()))
     }
 
     pub fn bytes(&self, range: core::ops::Range<usize>) -> &[u8] {
@@ -97,6 +184,7 @@ pub enum ExecError {
     Decode,
     MemoryOutOfBounds,
     MisalignedFetch,
+    MisalignedDataAccess,
     UnsupportedInstruction,
 }
 
@@ -105,11 +193,11 @@ pub fn step(cpu: &mut CpuState, mem: &mut Memory) -> Result<(), ExecError> {
         return Err(ExecError::Halted);
     }
 
-    let word = mem.read_u32(cpu.pc)?;
+    let word = mem.fetch_u32(cpu.pc)?;
     let insn = sw_rv32i_isa::decode_word(word).map_err(|_| ExecError::Decode)?;
-    cpu.pc = cpu.pc.wrapping_add(4);
+    cpu.advance_pc(4);
 
-    match insn {
+    let result = match insn {
         Instruction::OpImm {
             op: ImmOp::Addi,
             rd,
@@ -130,11 +218,15 @@ pub fn step(cpu: &mut CpuState, mem: &mut Memory) -> Result<(), ExecError> {
             mem.write_u8(addr, cpu.read_reg(rs2) as u8)
         }
         Instruction::Ebreak => {
-            cpu.halted = true;
+            cpu.set_halted(true);
             Ok(())
         }
         _ => Err(ExecError::UnsupportedInstruction),
+    };
+    if result.is_ok() {
+        cpu.increment_instr_count();
     }
+    result
 }
 
 pub fn run(cpu: &mut CpuState, mem: &mut Memory, max_steps: usize) -> Result<usize, ExecError> {
@@ -224,5 +316,56 @@ mod tests {
             step(&mut cpu, &mut mem),
             Err(ExecError::UnsupportedInstruction)
         );
+    }
+
+    #[test]
+    fn cpu_state_tracks_pc_registers_halt_and_instruction_count() {
+        let mut cpu = CpuState::new();
+        cpu.set_pc(0xffff_fffc);
+        cpu.advance_pc(8);
+        assert_eq!(cpu.pc(), 4);
+
+        cpu.write_reg(Reg::X1, 42);
+        cpu.write_reg(Reg::X0, 99);
+        assert_eq!(cpu.read_reg(Reg::X1), 42);
+        assert_eq!(cpu.read_reg(Reg::X0), 0);
+        assert_eq!(cpu.regs()[1], 42);
+
+        cpu.increment_instr_count();
+        cpu.set_halted(true);
+        assert_eq!(cpu.instr_count(), 1);
+        assert!(cpu.halted());
+    }
+
+    #[test]
+    fn memory_reads_and_writes_little_endian_values() {
+        let mut mem = Memory::new(16);
+        assert_eq!(mem.len(), 16);
+
+        mem.write_u8(0, 0xaa).unwrap();
+        mem.write_u16(2, 0x1234).unwrap();
+        mem.write_u32(4, 0x89ab_cdef).unwrap();
+
+        assert_eq!(mem.read_u8(0), Ok(0xaa));
+        assert_eq!(mem.read_u16(2), Ok(0x1234));
+        assert_eq!(mem.read_u32(4), Ok(0x89ab_cdef));
+        assert_eq!(
+            mem.bytes(0..8),
+            &[0xaa, 0, 0x34, 0x12, 0xef, 0xcd, 0xab, 0x89]
+        );
+    }
+
+    #[test]
+    fn memory_reports_bounds_and_alignment_errors() {
+        let mut mem = Memory::new(4);
+
+        assert_eq!(mem.load(3, &[1, 2]), Err(ExecError::MemoryOutOfBounds));
+        assert_eq!(mem.read_u8(4), Err(ExecError::MemoryOutOfBounds));
+        assert_eq!(mem.write_u8(4, 1), Err(ExecError::MemoryOutOfBounds));
+        assert_eq!(mem.read_u16(1), Err(ExecError::MisalignedDataAccess));
+        assert_eq!(mem.write_u16(1, 1), Err(ExecError::MisalignedDataAccess));
+        assert_eq!(mem.read_u32(2), Err(ExecError::MisalignedDataAccess));
+        assert_eq!(mem.write_u32(2, 1), Err(ExecError::MisalignedDataAccess));
+        assert_eq!(mem.fetch_u32(2), Err(ExecError::MisalignedFetch));
     }
 }
