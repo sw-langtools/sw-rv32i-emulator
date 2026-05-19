@@ -1,0 +1,1 @@
+Expanded CpuState with pc setters/advance, halt control, register access, and instruction count, and expanded Memory with little-endian byte/halfword/word read/write helpers, load, length, bounds, and alignment checks.
