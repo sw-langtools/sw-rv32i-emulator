@@ -1,0 +1,405 @@
+context:
+
+I am buying a couple Teensy 4.1 boards (1M, similar to COR24 ISA in some respects). I want to port my Rust-based x-assembler and C x-compiler to these new boards. I'd like to be able to emulate these Arm-v7 Thumb-2 ISA, in Rust/WASM, to provide coding demos in gh live-demos. Once I can compile C for these (not using gcc, but my Tiny C) I theoretically port Pascal and Lisp. How hard will it be to create or port/repurpose the emulator, x-assembler. and C x-crompiler.
+
+... details omitted ...
+
+Compare this to alternatives: ESP32-S3 32-bit Xtensa LX7 and/or Tiny MangoPi MQ-Pro rv64gcv -- which would be easiest/fastest to emulate, assemble?
+
+... details omitted ...
+
+So you say RV32I but the MQ-Pro is rv64gcv so how does that work?  Does it run in a subset mode?  I=integer (only), gcv=implies more.  What about floating point, hardware divide, etc.
+
+Yes — this is one of the nicest properties of RISC-V.
+
+A CPU implementing:
+
+rv64gcv
+
+can still run code generated for much smaller subsets like:
+
+rv32i
+rv32im
+rv64i
+rv64gc
+
+depending on ABI, privilege mode, and execution environment.
+
+The important idea is:
+
+RISC-V is modular
+
+The ISA name is a composition of extensions.
+
+Decode your example
+
+For the MangoPi MQ-Pro (Allwinner D1 / C906 class core), the advertised ISA is roughly:
+
+RV64GCV
+
+Meaning:
+
+Part	Meaning
+RV64	64-bit base architecture
+I	base integer ISA
+M	integer multiply/divide
+A	atomics
+F	single-precision float
+D	double-precision float
+G	shorthand for IMADF
+C	compressed instructions
+V	vector extension
+
+So:
+
+G = IMAFD
+
+thus:
+
+RV64GCV
+=
+RV64IMAFDCV
+Important insight
+
+You do not need to support all those extensions.
+
+You can deliberately target:
+
+RV32I
+
+or:
+
+RV32IM
+
+initially.
+
+The hardware will happily run it.
+
+How that works
+
+Think of it like x86.
+
+A modern x86 CPU supports:
+
+AVX512
+SSE4
+FMA
+AES
+...
+
+…but still runs:
+
+8086-style integer code
+
+Similarly:
+
+A RV64GCV processor can execute very small RISC-V subsets.
+
+The major distinction: RV32 vs RV64
+
+This is the one thing that matters more.
+
+RV32I
+
+Registers are conceptually 32-bit:
+
+x0-x31 = 32-bit
+
+Pointers are 32-bit.
+
+Arithmetic is 32-bit.
+
+RV64I
+
+Registers are 64-bit:
+
+x0-x31 = 64-bit
+
+Pointers are 64-bit.
+
+Arithmetic defaults to 64-bit.
+
+Can RV64 run RV32 code?
+YES
+
+Usually in one of two ways:
+
+Method	Description
+RV32 ABI/toolchain	generate 32-bit code
+Compatibility execution environment	OS/runtime supports 32-bit userland
+
+On Linux-capable RV64 systems, this is similar to:
+
+x86_64 running 32-bit x86 binaries
+But for your purposes…
+
+You probably do NOT want Linux compatibility complexity initially.
+
+Instead:
+
+Recommendation
+Start with:
+RV32IM
+Why?
+
+You get:
+
+Feature	Benefit
+I	simple clean base ISA
+M	hardware multiply/divide
+32-bit	simpler compiler/runtime
+no floats	simpler emulator
+no vectors	dramatically simpler
+no compressed	simpler decoder
+
+This is the sweet spot.
+
+About hardware divide
+
+Without M, integer divide is software-emulated.
+
+With:
+
+RV32IM
+
+you get hardware:
+
+mul
+mulh
+div
+rem
+
+This is worth implementing.
+
+The complexity increase is tiny compared to the usefulness.
+
+Floating point (F and D)
+
+You can ignore these initially.
+
+Why?
+
+Tiny C compilers historically often started with:
+
+int-only
+
+or:
+
+integer + software float
+
+Supporting hardware FP means:
+
+FP register file
+FP ABI
+NaNs
+rounding modes
+conversion ops
+calling convention changes
+emulator complexity
+
+Not worth it initially.
+
+Vector (V) extension
+
+Avoid completely at first.
+
+RVV is powerful but substantial.
+
+It introduces:
+
+vector register file
+configurable vector length
+masking
+strip-mining semantics
+lane operations
+vector memory ops
+
+Fantastic later for MLPL demos.
+
+Terrible first target.
+
+Compressed (C) extension
+
+This one is interesting.
+
+Compressed instructions are:
+
+16-bit encodings
+
+for common ops.
+
+Without C, all instructions are fixed:
+
+32-bit
+
+which is BEAUTIFUL for:
+
+emulators
+decoders
+educational diagrams
+My strong recommendation
+Start with pure RV32IM
+
+No:
+
+C
+F
+D
+V
+A initially
+
+This gives you:
+
+Extremely simple decoder
+
+Every instruction:
+
+4 bytes
+
+Always.
+
+Huge simplification.
+
+Your compiler becomes easier
+
+No compressed-relaxation logic.
+
+No FP ABI.
+
+No vector register allocation.
+
+No atomics.
+
+Just:
+
+registers
+stack
+branches
+loads/stores
+mul/div
+
+Perfect educational target.
+
+Then later add extensions incrementally
+
+This is where RISC-V shines educationally.
+
+You can literally grow the ISA live.
+
+Suggested progression
+Stage 1
+RV32I
+
+Teach:
+
+registers
+ALU
+branches
+stack
+memory
+Stage 2
+RV32IM
+
+Add:
+
+hardware multiply/divide
+Stage 3
+RV32IC
+
+Teach:
+
+code density
+compressed decode
+embedded optimization
+Stage 4
+RV64IM
+
+Teach:
+
+64-bit ABI
+pointer size
+sign extension
+mixed-width arithmetic
+Stage 5
+RV32IMV
+
+or:
+
+RV64GV
+
+Teach:
+
+vectorization
+ML operations
+tensor ops
+SIMD
+reduction ops
+
+This aligns beautifully with your MLPL goals.
+
+Why this is better than ARM educationally
+
+ARM evolved historically.
+
+RISC-V evolves compositionally.
+
+That is a huge teaching advantage.
+
+You can visually show:
+
+Base ISA
+ + M
+ + C
+ + F
+ + V
+
+as orthogonal capability layers.
+
+That maps naturally onto:
+
+compiler backends
+emulator modules
+MLPL operations
+visualization layers
+Important practical insight
+
+Even if the real hardware is RV64GCV:
+
+your emulator does NOT need to emulate the full hardware.
+
+You can create:
+
+SW-RV32IM
+
+as your educational virtual machine.
+
+Then later:
+
+emit real Linux RV64 binaries
+or run bare-metal on RV64 hardware
+or add extensions gradually
+The best architecture for your ecosystem
+
+I would seriously consider:
+
+COR24
+   ↓
+SW-RV32I
+   ↓
+SW-RV32IM
+   ↓
+SW-RV32IC
+   ↓
+SW-RV64IM
+   ↓
+SW-RVV
+
+with:
+
+one shared assembler framework
+one shared emulator UI
+one shared IR
+one visualization system
+
+That becomes an extraordinarily powerful educational platform.
+
