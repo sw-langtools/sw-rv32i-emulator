@@ -1,0 +1,1 @@
+Added explicit fetch_decode support, deterministic halted handling, run limit reporting, default pc advancement, and tests for fetch alignment, decode errors, run bounds, halt behavior, and instruction counts.

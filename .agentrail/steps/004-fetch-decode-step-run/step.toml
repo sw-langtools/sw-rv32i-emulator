@@ -1,8 +1,9 @@
 number = 4
 slug = "fetch-decode-step-run"
-status = "in-progress"
+status = "completed"
 description = "Implement the fetch/decode/step/run execution skeleton using sw-rv32i-isa dec..."
 role = "production"
 context_files = []
 created_at = "2026-05-18T19:08:06"
-commits = []
+completed_at = "2026-05-19T13:41:21"
+commits = ["a073a4b7db1734513f5f7531a0e6791f9e7d3b2d"]
