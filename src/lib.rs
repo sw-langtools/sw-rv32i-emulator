@@ -1,6 +1,6 @@
 //! Minimal RV32I emulator for the hello-world MVP.
 
-use sw_rv32i_isa::{ImmOp, Instruction, Reg, StoreWidth};
+use sw_rv32i_isa::{BranchCond, ImmOp, Instruction, Reg, RegOp, StoreWidth};
 
 pub struct CpuState {
     regs: [u32; 32],
@@ -199,17 +199,52 @@ pub fn step(cpu: &mut CpuState, mem: &mut Memory) -> Result<(), ExecError> {
         return Err(ExecError::Halted);
     }
 
+    let pc_before = cpu.pc();
     let insn = fetch_decode(cpu, mem)?;
     cpu.advance_pc(4);
 
     let result = match insn {
-        Instruction::OpImm {
-            op: ImmOp::Addi,
-            rd,
+        Instruction::Lui { rd, imm } => {
+            cpu.write_reg(rd, imm as u32);
+            Ok(())
+        }
+        Instruction::Auipc { rd, imm } => {
+            cpu.write_reg(rd, pc_before.wrapping_add(imm as u32));
+            Ok(())
+        }
+        Instruction::Jal { rd, offset } => {
+            let link = cpu.pc();
+            cpu.set_pc(pc_before.wrapping_add(offset as u32));
+            cpu.write_reg(rd, link);
+            Ok(())
+        }
+        Instruction::Jalr { rd, rs1, offset } => {
+            let link = cpu.pc();
+            let target = cpu.read_reg(rs1).wrapping_add(offset as u32) & !1;
+            cpu.set_pc(target);
+            cpu.write_reg(rd, link);
+            Ok(())
+        }
+        Instruction::Branch {
+            cond,
             rs1,
-            imm,
+            rs2,
+            offset,
         } => {
-            let value = cpu.read_reg(rs1).wrapping_add(imm as u32);
+            let lhs = cpu.read_reg(rs1);
+            let rhs = cpu.read_reg(rs2);
+            if branch_is_taken(cond, lhs, rhs) {
+                cpu.set_pc(pc_before.wrapping_add(offset as u32));
+            }
+            Ok(())
+        }
+        Instruction::OpImm { op, rd, rs1, imm } => {
+            let value = eval_op_imm(op, cpu.read_reg(rs1), imm);
+            cpu.write_reg(rd, value);
+            Ok(())
+        }
+        Instruction::Op { op, rd, rs1, rs2 } => {
+            let value = eval_op(op, cpu.read_reg(rs1), cpu.read_reg(rs2));
             cpu.write_reg(rd, value);
             Ok(())
         }
@@ -232,6 +267,46 @@ pub fn step(cpu: &mut CpuState, mem: &mut Memory) -> Result<(), ExecError> {
         cpu.increment_instr_count();
     }
     result
+}
+
+fn branch_is_taken(cond: BranchCond, lhs: u32, rhs: u32) -> bool {
+    match cond {
+        BranchCond::Eq => lhs == rhs,
+        BranchCond::Ne => lhs != rhs,
+        BranchCond::Lt => (lhs as i32) < (rhs as i32),
+        BranchCond::Ge => (lhs as i32) >= (rhs as i32),
+        BranchCond::Ltu => lhs < rhs,
+        BranchCond::Geu => lhs >= rhs,
+    }
+}
+
+fn eval_op_imm(op: ImmOp, lhs: u32, imm: i32) -> u32 {
+    match op {
+        ImmOp::Addi => lhs.wrapping_add(imm as u32),
+        ImmOp::Slti => u32::from((lhs as i32) < imm),
+        ImmOp::Sltiu => u32::from(lhs < imm as u32),
+        ImmOp::Xori => lhs ^ imm as u32,
+        ImmOp::Ori => lhs | imm as u32,
+        ImmOp::Andi => lhs & imm as u32,
+        ImmOp::Slli => lhs.wrapping_shl((imm as u32) & 0x1f),
+        ImmOp::Srli => lhs.wrapping_shr((imm as u32) & 0x1f),
+        ImmOp::Srai => ((lhs as i32) >> ((imm as u32) & 0x1f)) as u32,
+    }
+}
+
+fn eval_op(op: RegOp, lhs: u32, rhs: u32) -> u32 {
+    match op {
+        RegOp::Add => lhs.wrapping_add(rhs),
+        RegOp::Sub => lhs.wrapping_sub(rhs),
+        RegOp::Sll => lhs.wrapping_shl(rhs & 0x1f),
+        RegOp::Slt => u32::from((lhs as i32) < (rhs as i32)),
+        RegOp::Sltu => u32::from(lhs < rhs),
+        RegOp::Xor => lhs ^ rhs,
+        RegOp::Srl => lhs.wrapping_shr(rhs & 0x1f),
+        RegOp::Sra => ((lhs as i32) >> (rhs & 0x1f)) as u32,
+        RegOp::Or => lhs | rhs,
+        RegOp::And => lhs & rhs,
+    }
 }
 
 pub fn run(cpu: &mut CpuState, mem: &mut Memory, max_steps: usize) -> Result<usize, ExecError> {
@@ -296,6 +371,13 @@ mod tests {
         sb t0, 5(x1)
         ebreak
     "#;
+
+    fn load_program(mem: &mut Memory, insns: &[Instruction]) {
+        for (index, insn) in insns.iter().copied().enumerate() {
+            let word = sw_rv32i_isa::encode_word(insn).unwrap();
+            mem.write_u32((index * 4) as u32, word).unwrap();
+        }
+    }
 
     #[test]
     fn x0_writes_are_ignored() {
@@ -428,5 +510,240 @@ mod tests {
         assert_eq!(cpu.pc(), 4);
         assert_eq!(cpu.instr_count(), 1);
         assert!(!cpu.halted());
+    }
+
+    #[test]
+    fn executes_lui_auipc_and_immediate_ops_with_sign_extension() {
+        let mut cpu = CpuState::new();
+        let mut mem = Memory::new(128);
+        load_program(
+            &mut mem,
+            &[
+                Instruction::Lui {
+                    rd: Reg::X1,
+                    imm: 0x1234_5000,
+                },
+                Instruction::Auipc {
+                    rd: Reg::X2,
+                    imm: 0x1000,
+                },
+                Instruction::OpImm {
+                    op: ImmOp::Addi,
+                    rd: Reg::X3,
+                    rs1: Reg::X0,
+                    imm: -1,
+                },
+                Instruction::OpImm {
+                    op: ImmOp::Slti,
+                    rd: Reg::X4,
+                    rs1: Reg::X3,
+                    imm: 1,
+                },
+                Instruction::OpImm {
+                    op: ImmOp::Sltiu,
+                    rd: Reg::X5,
+                    rs1: Reg::X3,
+                    imm: 1,
+                },
+                Instruction::OpImm {
+                    op: ImmOp::Srai,
+                    rd: Reg::X6,
+                    rs1: Reg::X3,
+                    imm: 31,
+                },
+            ],
+        );
+
+        for _ in 0..6 {
+            step(&mut cpu, &mut mem).unwrap();
+        }
+
+        assert_eq!(cpu.read_reg(Reg::X1), 0x1234_5000);
+        assert_eq!(cpu.read_reg(Reg::X2), 0x1004);
+        assert_eq!(cpu.read_reg(Reg::X3), 0xffff_ffff);
+        assert_eq!(cpu.read_reg(Reg::X4), 1);
+        assert_eq!(cpu.read_reg(Reg::X5), 0);
+        assert_eq!(cpu.read_reg(Reg::X6), 0xffff_ffff);
+    }
+
+    #[test]
+    fn executes_register_ops_with_wrapping_and_signed_comparison() {
+        let mut cpu = CpuState::new();
+        cpu.write_reg(Reg::X1, 1);
+        cpu.write_reg(Reg::X2, 2);
+        cpu.write_reg(Reg::X3, 0xffff_ffff);
+        cpu.write_reg(Reg::X4, 31);
+        let mut mem = Memory::new(128);
+        load_program(
+            &mut mem,
+            &[
+                Instruction::Op {
+                    op: RegOp::Add,
+                    rd: Reg::X5,
+                    rs1: Reg::X3,
+                    rs2: Reg::X1,
+                },
+                Instruction::Op {
+                    op: RegOp::Sub,
+                    rd: Reg::X6,
+                    rs1: Reg::X1,
+                    rs2: Reg::X2,
+                },
+                Instruction::Op {
+                    op: RegOp::Slt,
+                    rd: Reg::X7,
+                    rs1: Reg::X3,
+                    rs2: Reg::X1,
+                },
+                Instruction::Op {
+                    op: RegOp::Sltu,
+                    rd: Reg::X8,
+                    rs1: Reg::X3,
+                    rs2: Reg::X1,
+                },
+                Instruction::Op {
+                    op: RegOp::Sra,
+                    rd: Reg::X9,
+                    rs1: Reg::X3,
+                    rs2: Reg::X4,
+                },
+                Instruction::Op {
+                    op: RegOp::Sll,
+                    rd: Reg::X10,
+                    rs1: Reg::X1,
+                    rs2: Reg::X4,
+                },
+            ],
+        );
+
+        for _ in 0..6 {
+            step(&mut cpu, &mut mem).unwrap();
+        }
+
+        assert_eq!(cpu.read_reg(Reg::X5), 0);
+        assert_eq!(cpu.read_reg(Reg::X6), 0xffff_ffff);
+        assert_eq!(cpu.read_reg(Reg::X7), 1);
+        assert_eq!(cpu.read_reg(Reg::X8), 0);
+        assert_eq!(cpu.read_reg(Reg::X9), 0xffff_ffff);
+        assert_eq!(cpu.read_reg(Reg::X10), 0x8000_0000);
+    }
+
+    #[test]
+    fn branches_use_original_pc_and_support_negative_offsets() {
+        let mut cpu = CpuState::new();
+        cpu.write_reg(Reg::X1, 0);
+        cpu.write_reg(Reg::X2, 1);
+        cpu.set_pc(8);
+        let mut mem = Memory::new(64);
+        load_program(
+            &mut mem,
+            &[
+                Instruction::Branch {
+                    cond: BranchCond::Eq,
+                    rs1: Reg::X1,
+                    rs2: Reg::X1,
+                    offset: 8,
+                },
+                Instruction::OpImm {
+                    op: ImmOp::Addi,
+                    rd: Reg::X3,
+                    rs1: Reg::X0,
+                    imm: 99,
+                },
+                Instruction::Branch {
+                    cond: BranchCond::Lt,
+                    rs1: Reg::X1,
+                    rs2: Reg::X2,
+                    offset: -8,
+                },
+            ],
+        );
+
+        step(&mut cpu, &mut mem).unwrap();
+        assert_eq!(cpu.pc(), 0);
+
+        step(&mut cpu, &mut mem).unwrap();
+        assert_eq!(cpu.pc(), 8);
+
+        cpu.write_reg(Reg::X1, 2);
+        step(&mut cpu, &mut mem).unwrap();
+        assert_eq!(cpu.pc(), 12);
+        assert_eq!(cpu.instr_count(), 3);
+    }
+
+    #[test]
+    fn jumps_write_link_values_and_jalr_clears_low_bit() {
+        let mut cpu = CpuState::new();
+        cpu.write_reg(Reg::X5, 0x21);
+        let mut mem = Memory::new(128);
+        load_program(
+            &mut mem,
+            &[
+                Instruction::Jal {
+                    rd: Reg::X1,
+                    offset: 16,
+                },
+                Instruction::OpImm {
+                    op: ImmOp::Addi,
+                    rd: Reg::X3,
+                    rs1: Reg::X0,
+                    imm: 1,
+                },
+                Instruction::OpImm {
+                    op: ImmOp::Addi,
+                    rd: Reg::X3,
+                    rs1: Reg::X0,
+                    imm: 2,
+                },
+                Instruction::OpImm {
+                    op: ImmOp::Addi,
+                    rd: Reg::X3,
+                    rs1: Reg::X0,
+                    imm: 3,
+                },
+                Instruction::Jalr {
+                    rd: Reg::X2,
+                    rs1: Reg::X5,
+                    offset: 4,
+                },
+            ],
+        );
+
+        step(&mut cpu, &mut mem).unwrap();
+        assert_eq!(cpu.read_reg(Reg::X1), 4);
+        assert_eq!(cpu.pc(), 16);
+
+        step(&mut cpu, &mut mem).unwrap();
+        assert_eq!(cpu.read_reg(Reg::X2), 20);
+        assert_eq!(cpu.pc(), 0x24);
+    }
+
+    #[test]
+    fn control_flow_and_alu_writes_to_x0_are_ignored() {
+        let mut cpu = CpuState::new();
+        cpu.write_reg(Reg::X1, 1);
+        let mut mem = Memory::new(64);
+        load_program(
+            &mut mem,
+            &[
+                Instruction::OpImm {
+                    op: ImmOp::Addi,
+                    rd: Reg::X0,
+                    rs1: Reg::X1,
+                    imm: 1,
+                },
+                Instruction::Jal {
+                    rd: Reg::X0,
+                    offset: 8,
+                },
+            ],
+        );
+
+        step(&mut cpu, &mut mem).unwrap();
+        assert_eq!(cpu.read_reg(Reg::X0), 0);
+
+        step(&mut cpu, &mut mem).unwrap();
+        assert_eq!(cpu.read_reg(Reg::X0), 0);
+        assert_eq!(cpu.pc(), 12);
     }
 }

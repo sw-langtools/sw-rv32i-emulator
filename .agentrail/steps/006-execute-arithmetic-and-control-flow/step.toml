@@ -1,6 +1,6 @@
 number = 6
 slug = "execute-arithmetic-and-control-flow"
-status = "pending"
+status = "in-progress"
 description = "Implement execution for RV32I LUI, AUIPC, JAL, JALR, branches, register-immed..."
 role = "production"
 context_files = []
