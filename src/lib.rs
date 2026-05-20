@@ -811,6 +811,43 @@ mod tests {
     }
 
     #[test]
+    fn machine_routes_uart_mmio_writes_to_target_output() {
+        let board =
+            sw_rv32i_target::load_board_file("../sw-rv32i-target/boards/esp32-c3-devkitm-1.toml")
+                .unwrap();
+        let uart_base = board.mmio_base("uart0").unwrap();
+        let mut machine = Machine::new(128, MmioBus::for_board(&board).unwrap());
+        machine.cpu.write_reg(Reg::X1, uart_base);
+        machine.cpu.write_reg(Reg::X2, b'H' as u32);
+        machine.cpu.write_reg(Reg::X3, b'i' as u32);
+        load_program(
+            &mut machine.memory,
+            &[
+                Instruction::Store {
+                    width: StoreWidth::Word,
+                    rs1: Reg::X1,
+                    rs2: Reg::X2,
+                    offset: sw_rv32i_target::GenericUartMmio::TXDATA_OFFSET as i32,
+                },
+                Instruction::Store {
+                    width: StoreWidth::Word,
+                    rs1: Reg::X1,
+                    rs2: Reg::X3,
+                    offset: sw_rv32i_target::GenericUartMmio::TXDATA_OFFSET as i32,
+                },
+                Instruction::Ebreak,
+            ],
+        );
+
+        assert_eq!(run_machine(&mut machine, 10), Ok(3));
+        assert_eq!(machine.mmio.uart_output("uart0"), Some(&b"Hi"[..]));
+        assert_eq!(
+            machine.mmio.uart_output_string("uart0"),
+            Ok("Hi".to_string())
+        );
+    }
+
+    #[test]
     fn runs_byte_loaded_arithmetic_branch_jump_and_memory_program() {
         let program = encoded_bytes(&[
             Instruction::OpImm {
