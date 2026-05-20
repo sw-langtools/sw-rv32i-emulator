@@ -3,6 +3,7 @@
 use std::fmt::Write;
 
 use sw_rv32i_isa::{BranchCond, ImmOp, Instruction, IsaProfile, LoadWidth, Reg, RegOp, StoreWidth};
+use sw_rv32i_target::MmioBus;
 
 pub struct CpuState {
     regs: [u32; 32],
@@ -178,6 +179,29 @@ impl Memory {
     pub fn bytes(&self, range: core::ops::Range<usize>) -> &[u8] {
         &self.bytes[range]
     }
+
+    fn contains_range(&self, addr: u32, len: usize) -> bool {
+        let start = addr as usize;
+        start
+            .checked_add(len)
+            .is_some_and(|end| end <= self.bytes.len())
+    }
+}
+
+pub struct Machine {
+    pub cpu: CpuState,
+    pub memory: Memory,
+    pub mmio: MmioBus,
+}
+
+impl Machine {
+    pub fn new(memory_size: usize, mmio: MmioBus) -> Self {
+        Self {
+            cpu: CpuState::new(),
+            memory: Memory::new(memory_size),
+            mmio,
+        }
+    }
 }
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
@@ -191,6 +215,8 @@ pub enum ExecError {
     RunLimitReached,
     EcallTrap,
     ProfileViolation,
+    MmioAccess,
+    UnsupportedMmioAccess,
 }
 
 pub fn fetch_decode(cpu: &CpuState, mem: &Memory) -> Result<Instruction, ExecError> {
@@ -205,6 +231,31 @@ pub fn step(cpu: &mut CpuState, mem: &mut Memory) -> Result<(), ExecError> {
 pub fn step_with_profile(
     cpu: &mut CpuState,
     mem: &mut Memory,
+    profile: IsaProfile,
+) -> Result<(), ExecError> {
+    step_internal(cpu, mem, None, profile)
+}
+
+pub fn step_machine(machine: &mut Machine) -> Result<(), ExecError> {
+    step_machine_with_profile(machine, IsaProfile::RV32I)
+}
+
+pub fn step_machine_with_profile(
+    machine: &mut Machine,
+    profile: IsaProfile,
+) -> Result<(), ExecError> {
+    step_internal(
+        &mut machine.cpu,
+        &mut machine.memory,
+        Some(&mut machine.mmio),
+        profile,
+    )
+}
+
+fn step_internal(
+    cpu: &mut CpuState,
+    mem: &mut Memory,
+    mmio: Option<&mut MmioBus>,
     profile: IsaProfile,
 ) -> Result<(), ExecError> {
     if cpu.halted {
@@ -270,7 +321,10 @@ pub fn step_with_profile(
             offset,
         } => {
             let addr = cpu.read_reg(rs1).wrapping_add(offset as u32);
-            let value = load_value(mem, width, addr)?;
+            let value = match mmio {
+                Some(bus) => load_value_with_mmio(mem, bus, width, addr)?,
+                None => load_value(mem, width, addr)?,
+            };
             cpu.write_reg(rd, value);
             Ok(())
         }
@@ -281,7 +335,10 @@ pub fn step_with_profile(
             offset,
         } => {
             let addr = cpu.read_reg(rs1).wrapping_add(offset as u32);
-            store_value(mem, width, addr, cpu.read_reg(rs2))
+            match mmio {
+                Some(bus) => store_value_with_mmio(mem, bus, width, addr, cpu.read_reg(rs2)),
+                None => store_value(mem, width, addr, cpu.read_reg(rs2)),
+            }
         }
         Instruction::Fence { .. } => Ok(()),
         Instruction::Ecall => Err(ExecError::EcallTrap),
@@ -294,6 +351,24 @@ pub fn step_with_profile(
         cpu.increment_instr_count();
     }
     result
+}
+
+fn load_value_with_mmio(
+    mem: &Memory,
+    mmio: &MmioBus,
+    width: LoadWidth,
+    addr: u32,
+) -> Result<u32, ExecError> {
+    if mem.contains_range(addr, width.bytes()) {
+        return load_value(mem, width, addr);
+    }
+    if width != LoadWidth::Word {
+        return Err(ExecError::UnsupportedMmioAccess);
+    }
+    if addr & 0x3 != 0 {
+        return Err(ExecError::MisalignedDataAccess);
+    }
+    mmio.read32(addr).map_err(|_| ExecError::MmioAccess)
 }
 
 fn load_value(mem: &Memory, width: LoadWidth, addr: u32) -> Result<u32, ExecError> {
@@ -317,6 +392,25 @@ fn store_value(
         StoreWidth::Half => mem.write_u16(addr, value as u16),
         StoreWidth::Word => mem.write_u32(addr, value),
     }
+}
+
+fn store_value_with_mmio(
+    mem: &mut Memory,
+    mmio: &mut MmioBus,
+    width: StoreWidth,
+    addr: u32,
+    value: u32,
+) -> Result<(), ExecError> {
+    if mem.contains_range(addr, width.bytes()) {
+        return store_value(mem, width, addr, value);
+    }
+    if width != StoreWidth::Word {
+        return Err(ExecError::UnsupportedMmioAccess);
+    }
+    if addr & 0x3 != 0 {
+        return Err(ExecError::MisalignedDataAccess);
+    }
+    mmio.write32(addr, value).map_err(|_| ExecError::MmioAccess)
 }
 
 fn branch_is_taken(cond: BranchCond, lhs: u32, rhs: u32) -> bool {
@@ -375,6 +469,26 @@ pub fn run_with_profile(
         steps += 1;
     }
     if !cpu.halted {
+        return Err(ExecError::RunLimitReached);
+    }
+    Ok(steps)
+}
+
+pub fn run_machine(machine: &mut Machine, max_steps: usize) -> Result<usize, ExecError> {
+    run_machine_with_profile(machine, max_steps, IsaProfile::RV32I)
+}
+
+pub fn run_machine_with_profile(
+    machine: &mut Machine,
+    max_steps: usize,
+    profile: IsaProfile,
+) -> Result<usize, ExecError> {
+    let mut steps = 0;
+    while !machine.cpu.halted && steps < max_steps {
+        step_machine_with_profile(machine, profile)?;
+        steps += 1;
+    }
+    if !machine.cpu.halted {
         return Err(ExecError::RunLimitReached);
     }
     Ok(steps)
@@ -499,6 +613,16 @@ mod tests {
         bytes
     }
 
+    fn esp32_c3_blink_machine() -> (Machine, u32, u32) {
+        let board =
+            sw_rv32i_target::load_board_file("../sw-rv32i-target/boards/esp32-c3-devkitm-1.toml")
+                .unwrap();
+        let gpio_base = board.mmio_base("gpio").unwrap();
+        let led_mask = 1 << board.led_gpio().unwrap();
+        let machine = Machine::new(128, MmioBus::for_board(&board).unwrap());
+        (machine, gpio_base, led_mask)
+    }
+
     #[test]
     fn x0_writes_are_ignored() {
         let mut cpu = CpuState::new();
@@ -595,6 +719,95 @@ mod tests {
         .map(|_| ());
 
         assert!(matches!(result, Err(MvpError::Asm(_))));
+    }
+
+    #[test]
+    fn machine_routes_word_load_store_outside_ram_to_gpio_mmio() {
+        let (mut machine, gpio_base, led_mask) = esp32_c3_blink_machine();
+        machine.cpu.write_reg(Reg::X1, gpio_base);
+        machine.cpu.write_reg(Reg::X2, led_mask);
+        load_program(
+            &mut machine.memory,
+            &[
+                Instruction::Store {
+                    width: StoreWidth::Word,
+                    rs1: Reg::X1,
+                    rs2: Reg::X2,
+                    offset: sw_rv32i_target::GenericGpioMmio::SET_OFFSET as i32,
+                },
+                Instruction::Load {
+                    width: LoadWidth::Word,
+                    rd: Reg::X3,
+                    rs1: Reg::X1,
+                    offset: sw_rv32i_target::GenericGpioMmio::READ_OFFSET as i32,
+                },
+                Instruction::Store {
+                    width: StoreWidth::Word,
+                    rs1: Reg::X1,
+                    rs2: Reg::X2,
+                    offset: sw_rv32i_target::GenericGpioMmio::CLEAR_OFFSET as i32,
+                },
+                Instruction::Ebreak,
+            ],
+        );
+
+        assert_eq!(run_machine(&mut machine, 10), Ok(4));
+        assert!(machine.cpu.halted());
+        assert_eq!(machine.cpu.read_reg(Reg::X3), led_mask);
+        assert_eq!(
+            machine.mmio.gpio().unwrap().trace(),
+            &[
+                sw_rv32i_target::GpioTraceEvent {
+                    pin: led_mask.trailing_zeros(),
+                    high: true,
+                },
+                sw_rv32i_target::GpioTraceEvent {
+                    pin: led_mask.trailing_zeros(),
+                    high: false,
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn memory_only_api_still_reports_out_of_bounds_for_mmio_address() {
+        let (_machine, gpio_base, led_mask) = esp32_c3_blink_machine();
+        let mut cpu = CpuState::new();
+        let mut mem = Memory::new(32);
+        cpu.write_reg(Reg::X1, gpio_base);
+        cpu.write_reg(Reg::X2, led_mask);
+        load_program(
+            &mut mem,
+            &[Instruction::Store {
+                width: StoreWidth::Word,
+                rs1: Reg::X1,
+                rs2: Reg::X2,
+                offset: 0,
+            }],
+        );
+
+        assert_eq!(step(&mut cpu, &mut mem), Err(ExecError::MemoryOutOfBounds));
+    }
+
+    #[test]
+    fn machine_rejects_non_word_mmio_accesses() {
+        let (mut machine, gpio_base, led_mask) = esp32_c3_blink_machine();
+        machine.cpu.write_reg(Reg::X1, gpio_base);
+        machine.cpu.write_reg(Reg::X2, led_mask);
+        load_program(
+            &mut machine.memory,
+            &[Instruction::Store {
+                width: StoreWidth::Byte,
+                rs1: Reg::X1,
+                rs2: Reg::X2,
+                offset: 0,
+            }],
+        );
+
+        assert_eq!(
+            step_machine(&mut machine),
+            Err(ExecError::UnsupportedMmioAccess)
+        );
     }
 
     #[test]

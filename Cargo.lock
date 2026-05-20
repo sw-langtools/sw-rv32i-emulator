@@ -19,6 +19,7 @@ version = "0.1.0"
 dependencies = [
  "sw-rv32i-asm",
  "sw-rv32i-isa",
+ "sw-rv32i-target",
 ]
 
 [[package]]
@@ -27,3 +28,7 @@ version = "0.1.0"
 dependencies = [
  "sw-isa-core",
 ]
+
+[[package]]
+name = "sw-rv32i-target"
+version = "0.1.0"

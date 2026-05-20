@@ -8,3 +8,4 @@ license = "MIT"
 [dependencies]
 sw-rv32i-asm = { path = "../sw-rv32i-asm" }
 sw-rv32i-isa = { path = "../sw-rv32i-isa" }
+sw-rv32i-target = { path = "../sw-rv32i-target" }
