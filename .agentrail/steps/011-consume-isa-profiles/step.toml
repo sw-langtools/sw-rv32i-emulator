@@ -1,6 +1,6 @@
 number = 11
 slug = "consume-isa-profiles"
-status = "pending"
+status = "in-progress"
 description = "Update sw-rv32i-emulator to consume IsaProfile from sw-rv32i-isa. Add profile..."
 role = "legacy"
 context_files = []

@@ -2,7 +2,7 @@
 
 use std::fmt::Write;
 
-use sw_rv32i_isa::{BranchCond, ImmOp, Instruction, LoadWidth, Reg, RegOp, StoreWidth};
+use sw_rv32i_isa::{BranchCond, ImmOp, Instruction, IsaProfile, LoadWidth, Reg, RegOp, StoreWidth};
 
 pub struct CpuState {
     regs: [u32; 32],
@@ -190,6 +190,7 @@ pub enum ExecError {
     UnsupportedInstruction,
     RunLimitReached,
     EcallTrap,
+    ProfileViolation,
 }
 
 pub fn fetch_decode(cpu: &CpuState, mem: &Memory) -> Result<Instruction, ExecError> {
@@ -198,12 +199,23 @@ pub fn fetch_decode(cpu: &CpuState, mem: &Memory) -> Result<Instruction, ExecErr
 }
 
 pub fn step(cpu: &mut CpuState, mem: &mut Memory) -> Result<(), ExecError> {
+    step_with_profile(cpu, mem, IsaProfile::RV32I)
+}
+
+pub fn step_with_profile(
+    cpu: &mut CpuState,
+    mem: &mut Memory,
+    profile: IsaProfile,
+) -> Result<(), ExecError> {
     if cpu.halted {
         return Err(ExecError::Halted);
     }
 
     let pc_before = cpu.pc();
     let insn = fetch_decode(cpu, mem)?;
+    profile
+        .validate_instruction(insn)
+        .map_err(|_| ExecError::ProfileViolation)?;
     cpu.advance_pc(4);
 
     let result = match insn {
@@ -348,9 +360,18 @@ fn eval_op(op: RegOp, lhs: u32, rhs: u32) -> u32 {
 }
 
 pub fn run(cpu: &mut CpuState, mem: &mut Memory, max_steps: usize) -> Result<usize, ExecError> {
+    run_with_profile(cpu, mem, max_steps, IsaProfile::RV32I)
+}
+
+pub fn run_with_profile(
+    cpu: &mut CpuState,
+    mem: &mut Memory,
+    max_steps: usize,
+    profile: IsaProfile,
+) -> Result<usize, ExecError> {
     let mut steps = 0;
     while !cpu.halted && steps < max_steps {
-        step(cpu, mem)?;
+        step_with_profile(cpu, mem, profile)?;
         steps += 1;
     }
     if !cpu.halted {
@@ -408,11 +429,20 @@ pub fn assemble_load_run(
     mem_size: usize,
     max_steps: usize,
 ) -> Result<(CpuState, Memory, usize), MvpError> {
-    let program = sw_rv32i_asm::assemble(source)?;
+    assemble_load_run_with_profile(source, mem_size, max_steps, IsaProfile::RV32I)
+}
+
+pub fn assemble_load_run_with_profile(
+    source: &str,
+    mem_size: usize,
+    max_steps: usize,
+    profile: IsaProfile,
+) -> Result<(CpuState, Memory, usize), MvpError> {
+    let program = sw_rv32i_asm::assemble_with_profile(source, profile)?;
     let mut cpu = CpuState::new();
     let mut mem = Memory::new(mem_size);
     mem.load(0, &program)?;
-    let steps = run(&mut cpu, &mut mem, max_steps)?;
+    let steps = run_with_profile(&mut cpu, &mut mem, max_steps, profile)?;
     Ok((cpu, mem, steps))
 }
 
@@ -483,6 +513,88 @@ mod tests {
         assert_eq!(cpu.instr_count(), 13);
         assert_eq!(steps, 13);
         assert_eq!(mem.bytes(0x100..0x106), b"hello\n");
+    }
+
+    #[test]
+    fn default_run_and_assemble_paths_use_rv32i_profile() {
+        let program = encoded_bytes(&[
+            Instruction::OpImm {
+                op: ImmOp::Addi,
+                rd: Reg::X31,
+                rs1: Reg::X0,
+                imm: 1,
+            },
+            Instruction::Ebreak,
+        ]);
+        let mut cpu = CpuState::new();
+        let mut mem = Memory::new(32);
+        mem.load(0, &program).unwrap();
+
+        assert_eq!(run(&mut cpu, &mut mem, 10), Ok(2));
+        assert_eq!(cpu.read_reg(Reg::X31), 1);
+
+        let (cpu, _, _) = assemble_load_run(
+            r#"
+            addi x31, x0, 1
+            ebreak
+            "#,
+            32,
+            10,
+        )
+        .unwrap();
+        assert_eq!(cpu.read_reg(Reg::X31), 1);
+    }
+
+    #[test]
+    fn profile_aware_step_rejects_rv32e_high_register_instruction() {
+        let program = encoded_bytes(&[Instruction::OpImm {
+            op: ImmOp::Addi,
+            rd: Reg::X16,
+            rs1: Reg::X0,
+            imm: 1,
+        }]);
+        let mut cpu = CpuState::new();
+        let mut mem = Memory::new(32);
+        mem.load(0, &program).unwrap();
+
+        assert_eq!(
+            step_with_profile(&mut cpu, &mut mem, IsaProfile::RV32E),
+            Err(ExecError::ProfileViolation)
+        );
+        assert_eq!(cpu.pc(), 0);
+        assert_eq!(cpu.instr_count(), 0);
+        assert_eq!(cpu.read_reg(Reg::X16), 0);
+    }
+
+    #[test]
+    fn profile_aware_run_accepts_rv32i_hello_world() {
+        let program = sw_rv32i_asm::assemble(HELLO_SOURCE).unwrap();
+        let mut cpu = CpuState::new();
+        let mut mem = Memory::new(512);
+        mem.load(0, &program).unwrap();
+
+        assert_eq!(
+            run_with_profile(&mut cpu, &mut mem, 100, IsaProfile::RV32I),
+            Ok(13)
+        );
+        assert!(cpu.halted());
+        assert_eq!(mem.bytes(0x100..0x106), b"hello\n");
+    }
+
+    #[test]
+    fn profile_aware_assemble_load_run_rejects_rv32e_high_register_source() {
+        let result = assemble_load_run_with_profile(
+            r#"
+            addi x16, x0, 1
+            ebreak
+            "#,
+            32,
+            10,
+            IsaProfile::RV32E,
+        )
+        .map(|_| ());
+
+        assert!(matches!(result, Err(MvpError::Asm(_))));
     }
 
     #[test]
