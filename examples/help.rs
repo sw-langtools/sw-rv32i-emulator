@@ -6,11 +6,15 @@ fn main() {
     println!("  cargo run --example hello");
     println!("  cargo run --example byte_loaded");
     println!("  cargo run --example board_blink");
+    println!("  cargo run --example board_uart_hello");
     println!(
         "  cargo run --example board_blink -- ../sw-rv32i-target/boards/esp32-c3-devkitm-1.toml"
     );
     println!(
         "  cargo run --example board_blink -- ../sw-rv32i-target/boards/ch32v003f4p6-evt.toml"
+    );
+    println!(
+        "  cargo run --example board_uart_hello -- ../sw-rv32i-target/boards/esp32-c3-devkitm-1.toml"
     );
     println!();
     println!("Examples:");
@@ -42,6 +46,15 @@ fn main() {
     println!("    as generic GPIO. Real ESP32-C3 DevKitM-1 RGB LED support needs WS2812/RMT");
     println!("    or bit-banged timing, not just GPIO high/low.");
     println!();
+    println!("  board_uart_hello");
+    println!("    Loads board TOML files, derives the profile from the board arch field,");
+    println!("    creates a target MmioBus, and runs one shared program that writes hello");
+    println!("    through uart0 generic-uart MMIO.");
+    println!("    Default targets:");
+    println!("      esp32-c3-devkitm-1       arch rv32imc -> emulator profile RV32IM");
+    println!("      ch32v003f4p6-evt         arch rv32ec -> emulator profile RV32E");
+    println!("    Current UART path: generic-uart MMIO, not register-accurate vendor UART.");
+    println!();
     println!("Profiles:");
     println!("  Board-driven examples read the board TOML arch field:");
     println!("    rv32e* -> RV32E");
@@ -70,11 +83,11 @@ fn main() {
     println!("Text and UART demos:");
     println!("  Runnable now:");
     println!("    cargo run --example hello");
-    println!("  Implemented but not yet exposed as a standalone Rust example:");
-    println!("    generic-uart MMIO in sw-rv32i-target");
-    println!("    emulator Machine store routing to UART output");
-    println!("  Planned next:");
-    println!("    a board_uart_hello example that writes hello through board TOML uart0.");
+    println!("    cargo run --example board_uart_hello");
+    println!(
+        "    cargo run --example board_uart_hello -- ../sw-rv32i-target/boards/ch32v003f4p6-evt.toml"
+    );
+    println!("  hello writes to RAM; board_uart_hello writes through board TOML uart0.");
     println!();
     println!("I2C and display demos:");
     println!("  Not implemented yet.");

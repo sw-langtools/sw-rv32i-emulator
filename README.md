@@ -23,6 +23,7 @@ examples remain queued in follow-up agentrail steps.
 cargo run --example hello
 cargo run --example byte_loaded
 cargo run --example board_blink
+cargo run --example board_uart_hello
 cargo run --example help
 ```
 
@@ -30,6 +31,10 @@ cargo run --example help
 `sw-rv32i-target` plus the CH32V003 RV32E placeholder, builds the same blink
 program for each board's `led` alias, derives the emulator profile from the
 board `arch`, and prints the GPIO MMIO trace.
+
+`board_uart_hello` defaults to ESP32-C3 plus CH32V003, builds one hello program
+for each board's `uart0` generic UART MMIO, derives the emulator profile from
+the board `arch`, and prints the captured UART output.
 
 ## Sibling Layout
 
