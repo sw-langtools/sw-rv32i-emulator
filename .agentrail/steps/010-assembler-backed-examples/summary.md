@@ -1,0 +1,1 @@
+Added assembler-backed integration tests that assemble examples/asm/hello.s, run it end to end, and verify listing, trace, CPU state, and memory output.
