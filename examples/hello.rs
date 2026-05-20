@@ -1,7 +1,7 @@
 use std::fmt::Write;
 
-use sw_rv32i_emulator::{CpuState, Memory, fetch_decode, step};
-use sw_rv32i_isa::{Reg, disassemble};
+use sw_rv32i_emulator::{CpuState, Memory, fetch_decode, format_cpu_state, format_hex_dump, step};
+use sw_rv32i_isa::disassemble;
 
 const SOURCE: &str = include_str!("asm/hello.s");
 const OUTPUT_ADDR: usize = 0x100;
@@ -54,7 +54,10 @@ fn run_demo() -> Result<(), String> {
     print!("{}", format_cpu_state(&cpu));
 
     println!("\n== Final Memory Dump ==");
-    print!("{}", format_memory_dump(&memory, OUTPUT_ADDR, OUTPUT_LEN));
+    print!(
+        "{}",
+        format_hex_dump(&memory, OUTPUT_ADDR, OUTPUT_LEN).map_err(|err| format!("{err:?}"))?
+    );
 
     println!("\n== Emulator Output ==");
     println!(
@@ -75,43 +78,5 @@ fn format_bytes(bytes: &[u8]) -> String {
         }
         out.push('\n');
     }
-    out
-}
-
-fn format_cpu_state(cpu: &CpuState) -> String {
-    let mut out = String::new();
-    writeln!(&mut out, "pc: 0x{:08x}", cpu.pc()).unwrap();
-    writeln!(&mut out, "halted: {}", cpu.halted()).unwrap();
-    writeln!(&mut out, "instr_count: {}", cpu.instr_count()).unwrap();
-    for reg in [Reg::X1, Reg::X5] {
-        writeln!(
-            &mut out,
-            "{} ({}): 0x{:08x}",
-            reg,
-            reg.abi_name(),
-            cpu.read_reg(reg)
-        )
-        .unwrap();
-    }
-    out
-}
-
-fn format_memory_dump(memory: &Memory, start: usize, len: usize) -> String {
-    let mut out = String::new();
-    let bytes = memory.bytes(start..start + len);
-    write!(&mut out, "{start:04x}:").unwrap();
-    for byte in bytes {
-        write!(&mut out, " {byte:02x}").unwrap();
-    }
-    write!(&mut out, "  |").unwrap();
-    for byte in bytes {
-        let ch = match *byte {
-            b'\n' => '.',
-            0x20..=0x7e => *byte as char,
-            _ => '.',
-        };
-        out.push(ch);
-    }
-    out.push_str("|\n");
     out
 }

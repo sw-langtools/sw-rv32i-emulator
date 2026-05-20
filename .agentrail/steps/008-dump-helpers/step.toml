@@ -1,6 +1,6 @@
 number = 8
 slug = "dump-helpers"
-status = "pending"
+status = "in-progress"
 description = "Add human-readable dump helpers for CPU state and memory. Expose public helpe..."
 role = "production"
 context_files = []

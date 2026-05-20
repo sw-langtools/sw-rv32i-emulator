@@ -1,5 +1,7 @@
 //! Minimal RV32I emulator for the hello-world MVP.
 
+use std::fmt::Write;
+
 use sw_rv32i_isa::{BranchCond, ImmOp, Instruction, LoadWidth, Reg, RegOp, StoreWidth};
 
 pub struct CpuState {
@@ -357,6 +359,50 @@ pub fn run(cpu: &mut CpuState, mem: &mut Memory, max_steps: usize) -> Result<usi
     Ok(steps)
 }
 
+pub fn format_cpu_state(cpu: &CpuState) -> String {
+    let mut out = String::new();
+    writeln!(&mut out, "pc: 0x{:08x}", cpu.pc()).unwrap();
+    writeln!(&mut out, "halted: {}", cpu.halted()).unwrap();
+    writeln!(&mut out, "instr_count: {}", cpu.instr_count()).unwrap();
+    for (index, value) in cpu.regs().iter().copied().enumerate() {
+        if value == 0 {
+            continue;
+        }
+        let reg = Reg::new(index as u8).unwrap();
+        writeln!(&mut out, "{} ({}): 0x{value:08x}", reg, reg.abi_name()).unwrap();
+    }
+    out
+}
+
+pub fn format_hex_dump(memory: &Memory, start: usize, len: usize) -> Result<String, ExecError> {
+    let end = start.checked_add(len).ok_or(ExecError::MemoryOutOfBounds)?;
+    if end > memory.len() {
+        return Err(ExecError::MemoryOutOfBounds);
+    }
+
+    let mut out = String::new();
+    for (line_index, chunk) in memory.bytes(start..end).chunks(16).enumerate() {
+        let line_addr = start + line_index * 16;
+        write!(&mut out, "{line_addr:04x}:").unwrap();
+        for byte in chunk {
+            write!(&mut out, " {byte:02x}").unwrap();
+        }
+        for _ in chunk.len()..16 {
+            out.push_str("   ");
+        }
+        out.push_str("  |");
+        for byte in chunk {
+            let ch = match *byte {
+                0x20..=0x7e => *byte as char,
+                _ => '.',
+            };
+            out.push(ch);
+        }
+        out.push_str("|\n");
+    }
+    Ok(out)
+}
+
 pub fn assemble_load_run(
     source: &str,
     mem_size: usize,
@@ -494,6 +540,52 @@ mod tests {
         assert_eq!(mem.read_u32(2), Err(ExecError::MisalignedDataAccess));
         assert_eq!(mem.write_u32(2, 1), Err(ExecError::MisalignedDataAccess));
         assert_eq!(mem.fetch_u32(2), Err(ExecError::MisalignedFetch));
+    }
+
+    #[test]
+    fn formats_cpu_state_with_nonzero_registers_only() {
+        let mut cpu = CpuState::new();
+        cpu.set_pc(0x34);
+        cpu.write_reg(Reg::X1, 0x100);
+        cpu.write_reg(Reg::X5, 0x0a);
+        cpu.increment_instr_count();
+        cpu.increment_instr_count();
+        cpu.set_halted(true);
+
+        assert_eq!(
+            format_cpu_state(&cpu),
+            "pc: 0x00000034\nhalted: true\ninstr_count: 2\nx1 (ra): 0x00000100\nx5 (t0): 0x0000000a\n"
+        );
+    }
+
+    #[test]
+    fn formats_hex_dump_with_ascii_column_and_padding() {
+        let mut mem = Memory::new(32);
+        mem.load(0x10, b"hello\n").unwrap();
+
+        assert_eq!(
+            format_hex_dump(&mem, 0x10, 6),
+            Ok("0010: 68 65 6c 6c 6f 0a                                |hello.|\n".to_string())
+        );
+    }
+
+    #[test]
+    fn formats_multi_line_hex_dump_and_reports_bounds() {
+        let mut mem = Memory::new(40);
+        mem.load(0, b"abcdefghijklmnopqr").unwrap();
+
+        assert_eq!(
+            format_hex_dump(&mem, 0, 18),
+            Ok(concat!(
+                "0000: 61 62 63 64 65 66 67 68 69 6a 6b 6c 6d 6e 6f 70  |abcdefghijklmnop|\n",
+                "0010: 71 72                                            |qr|\n"
+            )
+            .to_string())
+        );
+        assert_eq!(
+            format_hex_dump(&mem, 39, 2),
+            Err(ExecError::MemoryOutOfBounds)
+        );
     }
 
     #[test]
