@@ -1,6 +1,6 @@
 //! Minimal RV32I emulator for the hello-world MVP.
 
-use sw_rv32i_isa::{BranchCond, ImmOp, Instruction, Reg, RegOp, StoreWidth};
+use sw_rv32i_isa::{BranchCond, ImmOp, Instruction, LoadWidth, Reg, RegOp, StoreWidth};
 
 pub struct CpuState {
     regs: [u32; 32],
@@ -187,6 +187,7 @@ pub enum ExecError {
     MisalignedDataAccess,
     UnsupportedInstruction,
     RunLimitReached,
+    EcallTrap,
 }
 
 pub fn fetch_decode(cpu: &CpuState, mem: &Memory) -> Result<Instruction, ExecError> {
@@ -248,25 +249,60 @@ pub fn step(cpu: &mut CpuState, mem: &mut Memory) -> Result<(), ExecError> {
             cpu.write_reg(rd, value);
             Ok(())
         }
+        Instruction::Load {
+            width,
+            rd,
+            rs1,
+            offset,
+        } => {
+            let addr = cpu.read_reg(rs1).wrapping_add(offset as u32);
+            let value = load_value(mem, width, addr)?;
+            cpu.write_reg(rd, value);
+            Ok(())
+        }
         Instruction::Store {
-            width: StoreWidth::Byte,
+            width,
             rs1,
             rs2,
             offset,
         } => {
             let addr = cpu.read_reg(rs1).wrapping_add(offset as u32);
-            mem.write_u8(addr, cpu.read_reg(rs2) as u8)
+            store_value(mem, width, addr, cpu.read_reg(rs2))
         }
+        Instruction::Fence { .. } => Ok(()),
+        Instruction::Ecall => Err(ExecError::EcallTrap),
         Instruction::Ebreak => {
             cpu.set_halted(true);
             Ok(())
         }
-        _ => Err(ExecError::UnsupportedInstruction),
     };
     if result.is_ok() {
         cpu.increment_instr_count();
     }
     result
+}
+
+fn load_value(mem: &Memory, width: LoadWidth, addr: u32) -> Result<u32, ExecError> {
+    match width {
+        LoadWidth::Byte => Ok(mem.read_u8(addr)? as i8 as i32 as u32),
+        LoadWidth::Half => Ok(mem.read_u16(addr)? as i16 as i32 as u32),
+        LoadWidth::Word => mem.read_u32(addr),
+        LoadWidth::ByteUnsigned => Ok(mem.read_u8(addr)? as u32),
+        LoadWidth::HalfUnsigned => Ok(mem.read_u16(addr)? as u32),
+    }
+}
+
+fn store_value(
+    mem: &mut Memory,
+    width: StoreWidth,
+    addr: u32,
+    value: u32,
+) -> Result<(), ExecError> {
+    match width {
+        StoreWidth::Byte => mem.write_u8(addr, value as u8),
+        StoreWidth::Half => mem.write_u16(addr, value as u16),
+        StoreWidth::Word => mem.write_u32(addr, value),
+    }
 }
 
 fn branch_is_taken(cond: BranchCond, lhs: u32, rhs: u32) -> bool {
@@ -396,17 +432,17 @@ mod tests {
     }
 
     #[test]
-    fn rejects_non_mvp_instruction() {
+    fn ecall_reports_typed_trap() {
         let program = sw_rv32i_isa::encode_word(Instruction::Ecall)
             .unwrap()
             .to_le_bytes();
         let mut cpu = CpuState::new();
         let mut mem = Memory::new(64);
         mem.load(0, &program).unwrap();
-        assert_eq!(
-            step(&mut cpu, &mut mem),
-            Err(ExecError::UnsupportedInstruction)
-        );
+        assert_eq!(step(&mut cpu, &mut mem), Err(ExecError::EcallTrap));
+        assert_eq!(cpu.pc(), 4);
+        assert_eq!(cpu.instr_count(), 0);
+        assert!(!cpu.halted());
     }
 
     #[test]
@@ -745,5 +781,179 @@ mod tests {
         step(&mut cpu, &mut mem).unwrap();
         assert_eq!(cpu.read_reg(Reg::X0), 0);
         assert_eq!(cpu.pc(), 12);
+    }
+
+    #[test]
+    fn executes_loads_with_signed_and_unsigned_extension() {
+        let mut cpu = CpuState::new();
+        cpu.write_reg(Reg::X1, 0x20);
+        let mut mem = Memory::new(128);
+        mem.write_u8(0x20, 0x80).unwrap();
+        mem.write_u16(0x22, 0x8001).unwrap();
+        mem.write_u32(0x24, 0x89ab_cdef).unwrap();
+        load_program(
+            &mut mem,
+            &[
+                Instruction::Load {
+                    width: LoadWidth::Byte,
+                    rd: Reg::X2,
+                    rs1: Reg::X1,
+                    offset: 0,
+                },
+                Instruction::Load {
+                    width: LoadWidth::ByteUnsigned,
+                    rd: Reg::X3,
+                    rs1: Reg::X1,
+                    offset: 0,
+                },
+                Instruction::Load {
+                    width: LoadWidth::Half,
+                    rd: Reg::X4,
+                    rs1: Reg::X1,
+                    offset: 2,
+                },
+                Instruction::Load {
+                    width: LoadWidth::HalfUnsigned,
+                    rd: Reg::X5,
+                    rs1: Reg::X1,
+                    offset: 2,
+                },
+                Instruction::Load {
+                    width: LoadWidth::Word,
+                    rd: Reg::X6,
+                    rs1: Reg::X1,
+                    offset: 4,
+                },
+            ],
+        );
+
+        for _ in 0..5 {
+            step(&mut cpu, &mut mem).unwrap();
+        }
+
+        assert_eq!(cpu.read_reg(Reg::X2), 0xffff_ff80);
+        assert_eq!(cpu.read_reg(Reg::X3), 0x80);
+        assert_eq!(cpu.read_reg(Reg::X4), 0xffff_8001);
+        assert_eq!(cpu.read_reg(Reg::X5), 0x8001);
+        assert_eq!(cpu.read_reg(Reg::X6), 0x89ab_cdef);
+    }
+
+    #[test]
+    fn executes_stores_by_width_with_little_endian_layout() {
+        let mut cpu = CpuState::new();
+        cpu.write_reg(Reg::X1, 0x20);
+        cpu.write_reg(Reg::X2, 0x89ab_cdef);
+        let mut mem = Memory::new(128);
+        load_program(
+            &mut mem,
+            &[
+                Instruction::Store {
+                    width: StoreWidth::Byte,
+                    rs1: Reg::X1,
+                    rs2: Reg::X2,
+                    offset: 0,
+                },
+                Instruction::Store {
+                    width: StoreWidth::Half,
+                    rs1: Reg::X1,
+                    rs2: Reg::X2,
+                    offset: 2,
+                },
+                Instruction::Store {
+                    width: StoreWidth::Word,
+                    rs1: Reg::X1,
+                    rs2: Reg::X2,
+                    offset: 4,
+                },
+            ],
+        );
+
+        for _ in 0..3 {
+            step(&mut cpu, &mut mem).unwrap();
+        }
+
+        assert_eq!(
+            mem.bytes(0x20..0x28),
+            &[0xef, 0, 0xef, 0xcd, 0xef, 0xcd, 0xab, 0x89]
+        );
+    }
+
+    #[test]
+    fn load_store_alignment_and_bounds_errors_are_reported() {
+        let mut cpu = CpuState::new();
+        cpu.write_reg(Reg::X1, 0x21);
+        cpu.write_reg(Reg::X2, 0x1234);
+        let mut mem = Memory::new(64);
+        load_program(
+            &mut mem,
+            &[Instruction::Load {
+                width: LoadWidth::Half,
+                rd: Reg::X3,
+                rs1: Reg::X1,
+                offset: 0,
+            }],
+        );
+        assert_eq!(
+            step(&mut cpu, &mut mem),
+            Err(ExecError::MisalignedDataAccess)
+        );
+        assert_eq!(cpu.instr_count(), 0);
+
+        let mut cpu = CpuState::new();
+        cpu.write_reg(Reg::X1, 0x3e);
+        let mut mem = Memory::new(64);
+        load_program(
+            &mut mem,
+            &[Instruction::Store {
+                width: StoreWidth::Word,
+                rs1: Reg::X1,
+                rs2: Reg::X2,
+                offset: 0,
+            }],
+        );
+        assert_eq!(
+            step(&mut cpu, &mut mem),
+            Err(ExecError::MisalignedDataAccess)
+        );
+
+        let mut cpu = CpuState::new();
+        cpu.write_reg(Reg::X1, 0x40);
+        let mut mem = Memory::new(64);
+        load_program(
+            &mut mem,
+            &[Instruction::Load {
+                width: LoadWidth::Byte,
+                rd: Reg::X3,
+                rs1: Reg::X1,
+                offset: 0,
+            }],
+        );
+        assert_eq!(step(&mut cpu, &mut mem), Err(ExecError::MemoryOutOfBounds));
+    }
+
+    #[test]
+    fn fence_is_noop_and_ebreak_halts_deterministically() {
+        let mut cpu = CpuState::new();
+        let mut mem = Memory::new(64);
+        load_program(
+            &mut mem,
+            &[
+                Instruction::Fence {
+                    predecessor: sw_rv32i_isa::FenceSet::R,
+                    successor: sw_rv32i_isa::FenceSet::W,
+                },
+                Instruction::Ebreak,
+            ],
+        );
+
+        step(&mut cpu, &mut mem).unwrap();
+        assert_eq!(cpu.pc(), 4);
+        assert_eq!(cpu.instr_count(), 1);
+        assert!(!cpu.halted());
+
+        step(&mut cpu, &mut mem).unwrap();
+        assert_eq!(cpu.pc(), 8);
+        assert_eq!(cpu.instr_count(), 2);
+        assert!(cpu.halted());
     }
 }

@@ -1,6 +1,6 @@
 number = 7
 slug = "execute-loads-stores-system"
-status = "pending"
+status = "in-progress"
 description = "Implement RV32I loads, stores, FENCE, ECALL, and EBREAK behavior. Loads and s..."
 role = "production"
 context_files = []
