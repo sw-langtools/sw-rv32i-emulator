@@ -12,6 +12,7 @@ const DEFAULT_BOARDS: &[&str] = &[
     "../sw-rv32i-target/boards/esp32-c3-devkitm-1.toml",
     "../sw-rv32i-target/boards/esp32-c5-devkitc-1.toml",
     "../sw-rv32i-target/boards/esp32-c6-devkitc-1.toml",
+    "../sw-rv32i-target/boards/ch32v003f4p6-evt.toml",
 ];
 
 fn main() {
