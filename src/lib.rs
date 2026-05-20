@@ -461,6 +461,14 @@ mod tests {
         }
     }
 
+    fn encoded_bytes(insns: &[Instruction]) -> Vec<u8> {
+        let mut bytes = Vec::with_capacity(insns.len() * 4);
+        for insn in insns.iter().copied() {
+            bytes.extend_from_slice(&sw_rv32i_isa::encode_word(insn).unwrap().to_le_bytes());
+        }
+        bytes
+    }
+
     #[test]
     fn x0_writes_are_ignored() {
         let mut cpu = CpuState::new();
@@ -475,6 +483,94 @@ mod tests {
         assert_eq!(cpu.instr_count(), 13);
         assert_eq!(steps, 13);
         assert_eq!(mem.bytes(0x100..0x106), b"hello\n");
+    }
+
+    #[test]
+    fn runs_byte_loaded_arithmetic_branch_jump_and_memory_program() {
+        let program = encoded_bytes(&[
+            Instruction::OpImm {
+                op: ImmOp::Addi,
+                rd: Reg::X1,
+                rs1: Reg::X0,
+                imm: 0x80,
+            },
+            Instruction::OpImm {
+                op: ImmOp::Addi,
+                rd: Reg::X2,
+                rs1: Reg::X0,
+                imm: 7,
+            },
+            Instruction::OpImm {
+                op: ImmOp::Addi,
+                rd: Reg::X3,
+                rs1: Reg::X0,
+                imm: 5,
+            },
+            Instruction::Op {
+                op: RegOp::Add,
+                rd: Reg::X4,
+                rs1: Reg::X2,
+                rs2: Reg::X3,
+            },
+            Instruction::Store {
+                width: StoreWidth::Word,
+                rs1: Reg::X1,
+                rs2: Reg::X4,
+                offset: 0,
+            },
+            Instruction::Load {
+                width: LoadWidth::Word,
+                rd: Reg::X5,
+                rs1: Reg::X1,
+                offset: 0,
+            },
+            Instruction::Branch {
+                cond: BranchCond::Eq,
+                rs1: Reg::X4,
+                rs2: Reg::X5,
+                offset: 12,
+            },
+            Instruction::OpImm {
+                op: ImmOp::Addi,
+                rd: Reg::X6,
+                rs1: Reg::X0,
+                imm: 1,
+            },
+            Instruction::Jal {
+                rd: Reg::X0,
+                offset: 8,
+            },
+            Instruction::OpImm {
+                op: ImmOp::Addi,
+                rd: Reg::X6,
+                rs1: Reg::X0,
+                imm: 2,
+            },
+            Instruction::Ebreak,
+        ]);
+        let mut cpu = CpuState::new();
+        let mut mem = Memory::new(256);
+        mem.load(0, &program).unwrap();
+
+        assert_eq!(run(&mut cpu, &mut mem, 100), Ok(9));
+        assert!(cpu.halted());
+        assert_eq!(cpu.read_reg(Reg::X4), 12);
+        assert_eq!(cpu.read_reg(Reg::X5), 12);
+        assert_eq!(cpu.read_reg(Reg::X6), 2);
+        assert_eq!(mem.bytes(0x80..0x84), &[12, 0, 0, 0]);
+    }
+
+    #[test]
+    fn byte_loaded_ecall_traps_without_assembler() {
+        let program = 0x0000_0073u32.to_le_bytes();
+        let mut cpu = CpuState::new();
+        let mut mem = Memory::new(16);
+        mem.load(0, &program).unwrap();
+
+        assert_eq!(step(&mut cpu, &mut mem), Err(ExecError::EcallTrap));
+        assert_eq!(cpu.pc(), 4);
+        assert_eq!(cpu.instr_count(), 0);
+        assert!(!cpu.halted());
     }
 
     #[test]

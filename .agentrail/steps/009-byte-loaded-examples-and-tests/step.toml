@@ -1,6 +1,6 @@
 number = 9
 slug = "byte-loaded-examples-and-tests"
-status = "pending"
+status = "in-progress"
 description = "Add byte-loaded emulator tests and examples that do not require the assembler..."
 role = "production"
 context_files = []
