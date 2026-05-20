@@ -1,0 +1,1 @@
+Implemented RV32I load, store, fence, ECALL, and EBREAK execution with signed/unsigned extension, width-specific little-endian stores, alignment/bounds errors, no-op FENCE, typed ECALL trap, and deterministic EBREAK halt tests.
