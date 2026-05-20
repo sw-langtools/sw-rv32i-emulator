@@ -1,0 +1,1 @@
+Added profile-aware emulator execution APIs that validate decoded instructions through IsaProfile while preserving RV32I defaults.
