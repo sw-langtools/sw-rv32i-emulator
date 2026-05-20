@@ -4,7 +4,9 @@ use std::path::{Path, PathBuf};
 
 use sw_rv32i_emulator::{Machine, fetch_decode, format_cpu_state, step_machine_with_profile};
 use sw_rv32i_isa::{ImmOp, Instruction, IsaProfile, LoadWidth, Reg, StoreWidth, disassemble};
-use sw_rv32i_target::{Board, GenericGpioMmio, MmioBus, load_board_file};
+use sw_rv32i_target::{
+    Board, GenericGpioMmio, MmioBus, generic_gpio_led_blink_binding, load_board_file,
+};
 
 const DEFAULT_BOARDS: &[&str] = &[
     "../sw-rv32i-target/boards/esp32-c3-devkitm-1.toml",
@@ -41,23 +43,19 @@ fn run_demo() -> Result<(), String> {
 
 fn run_board(path: &Path) -> Result<(), String> {
     let board = load_board_file(path).map_err(|err| format!("{path:?}: {err}"))?;
-    let gpio_base = board
-        .mmio_base("gpio")
-        .ok_or_else(|| format!("{} has no gpio MMIO device", board.id))?;
-    let led_pin = board
-        .led_gpio()
-        .ok_or_else(|| format!("{} has no led alias", board.id))?;
-    let led_mask = 1u32
-        .checked_shl(led_pin)
-        .ok_or_else(|| format!("{} led pin {led_pin} cannot fit in a GPIO mask", board.id))?;
-    let program = blink_program(gpio_base, led_mask)?;
+    let binding = generic_gpio_led_blink_binding(&board)
+        .map_err(|err| format!("{} cannot run board_blink: {err}", board.id))?;
+    let program = blink_program(binding.gpio_base, binding.led_mask)?;
 
     println!("\n== Board: {} ==", board.id);
     println!("path: {}", path.display());
     println!("family: {}", board.family);
     println!("arch: {}", board.arch);
-    println!("led: gpio{led_pin} mask 0x{led_mask:08x}");
-    println!("gpio mmio: 0x{gpio_base:08x}");
+    println!(
+        "led: gpio{} mask 0x{:08x}",
+        binding.led_pin, binding.led_mask
+    );
+    println!("gpio mmio: 0x{:08x}", binding.gpio_base);
 
     println!("\nProgram Bytes:");
     print!("{}", format_bytes(&program));
