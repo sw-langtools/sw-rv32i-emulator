@@ -48,8 +48,8 @@ fn main() {
     println!();
     println!("  board_uart_hello");
     println!("    Loads board TOML files, derives the profile from the board arch field,");
-    println!("    creates a target MmioBus, and runs one shared program that writes hello");
-    println!("    through uart0 generic-uart MMIO.");
+    println!("    assembles a shared source program with li/sw MMIO syntax, creates a");
+    println!("    target MmioBus, and writes hello through uart0 generic-uart MMIO.");
     println!("    Default targets:");
     println!("      esp32-c3-devkitm-1       arch rv32imc -> emulator profile RV32IM");
     println!("      ch32v003f4p6-evt         arch rv32ec -> emulator profile RV32E");
@@ -96,8 +96,8 @@ fn main() {
     println!("    emulator routes MMIO transactions to the device model");
     println!("    shared demos bind to logical aliases like display0 rather than board ids");
     println!();
-    println!("Assembler-source board blink status:");
-    println!("  Not runnable yet from .s for MMIO targets.");
-    println!("  Needed next: assembler support for loading full 32-bit MMIO addresses");
-    println!("  ergonomically, likely via la/li pseudo-ops or explicit lui/addi examples.");
+    println!("Assembler-source MMIO status:");
+    println!("  Runnable now for UART hello through board_uart_hello.");
+    println!("  The assembler supports li for full 32-bit constants and sw for word MMIO.");
+    println!("  Board blink still uses Rust ISA-helper encoding; moving it to .s is next.");
 }

@@ -32,9 +32,9 @@ cargo run --example help
 program for each board's `led` alias, derives the emulator profile from the
 board `arch`, and prints the GPIO MMIO trace.
 
-`board_uart_hello` defaults to ESP32-C3 plus CH32V003, builds one hello program
-for each board's `uart0` generic UART MMIO, derives the emulator profile from
-the board `arch`, and prints the captured UART output.
+`board_uart_hello` defaults to ESP32-C3 plus CH32V003, assembles one hello
+source program for each board's `uart0` generic UART MMIO, derives the emulator
+profile from the board `arch`, and prints the captured UART output.
 
 ## Sibling Layout
 
