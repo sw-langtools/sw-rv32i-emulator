@@ -1,8 +1,9 @@
 number = 9
 slug = "byte-loaded-examples-and-tests"
-status = "in-progress"
+status = "completed"
 description = "Add byte-loaded emulator tests and examples that do not require the assembler..."
 role = "production"
 context_files = []
 created_at = "2026-05-18T19:08:25"
-commits = []
+completed_at = "2026-05-20T08:14:23"
+commits = ["bddeb11519947c6c8ce4b4dd2234dd4e3d3578a0"]

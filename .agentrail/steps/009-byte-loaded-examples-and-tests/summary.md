@@ -1,0 +1,1 @@
+Added byte-loaded emulator coverage and an example that builds programs from ISA-encoded instructions without using the assembler.
