@@ -28,9 +28,9 @@ cargo run --example help
 ```
 
 `board_blink` defaults to the ESP32-C3/C5/C6 placeholder board TOML files in
-`sw-rv32i-target` plus the CH32V003 RV32E placeholder, builds the same blink
-program for each board's `led` alias, derives the emulator profile from the
-board `arch`, and prints the GPIO MMIO trace.
+`sw-rv32i-target` plus the CH32V003 RV32E placeholder, assembles the same blink
+source program for each board's `led` alias, derives the emulator profile from
+the board `arch`, and prints the GPIO MMIO trace.
 
 `board_uart_hello` defaults to ESP32-C3 plus CH32V003, assembles one hello
 source program for each board's `uart0` generic UART MMIO, derives the emulator

@@ -3,7 +3,7 @@ use std::fmt::Write;
 use std::path::{Path, PathBuf};
 
 use sw_rv32i_emulator::{Machine, fetch_decode, format_cpu_state, step_machine_with_profile};
-use sw_rv32i_isa::{ImmOp, Instruction, IsaProfile, LoadWidth, Reg, StoreWidth, disassemble};
+use sw_rv32i_isa::{IsaProfile, disassemble};
 use sw_rv32i_target::{
     Board, GenericGpioMmio, MmioBus, generic_gpio_led_blink_binding, load_board_file,
 };
@@ -46,7 +46,14 @@ fn run_board(path: &Path) -> Result<(), String> {
     let board = load_board_file(path).map_err(|err| format!("{path:?}: {err}"))?;
     let binding = generic_gpio_led_blink_binding(&board)
         .map_err(|err| format!("{} cannot run board_blink: {err}", board.id))?;
-    let program = blink_program(binding.gpio_base, binding.led_mask)?;
+    let profile = profile_for_board(&board);
+    let source = blink_source(binding.gpio_base, binding.led_mask);
+    let program = sw_rv32i_asm::assemble_with_profile(&source, profile).map_err(|err| {
+        format!(
+            "{} board_blink source failed profile validation: {err}",
+            board.id
+        )
+    })?;
 
     println!("\n== Board: {} ==", board.id);
     println!("path: {}", path.display());
@@ -57,6 +64,9 @@ fn run_board(path: &Path) -> Result<(), String> {
         binding.led_pin, binding.led_mask
     );
     println!("gpio mmio: 0x{:08x}", binding.gpio_base);
+
+    println!("\nSource:");
+    print!("{source}");
 
     println!("\nProgram Bytes:");
     print!("{}", format_bytes(&program));
@@ -74,8 +84,7 @@ fn run_board(path: &Path) -> Result<(), String> {
         let insn = fetch_decode(&machine.cpu, &machine.memory).map_err(|err| format!("{err:?}"))?;
         let mut text = String::new();
         disassemble(insn, &mut text).map_err(|err| err.to_string())?;
-        step_machine_with_profile(&mut machine, profile_for_board(&board))
-            .map_err(|err| format!("{err:?}"))?;
+        step_machine_with_profile(&mut machine, profile).map_err(|err| format!("{err:?}"))?;
         println!("{pc:04x}: {text}");
     }
 
@@ -106,52 +115,18 @@ fn profile_for_board(board: &Board) -> IsaProfile {
     }
 }
 
-fn blink_program(gpio_base: u32, led_mask: u32) -> Result<Vec<u8>, String> {
-    let mut insns = Vec::new();
-    insns.extend(load_const(Reg::X1, gpio_base));
-    insns.extend(load_const(Reg::X2, led_mask));
-    insns.extend([
-        Instruction::Store {
-            width: StoreWidth::Word,
-            rs1: Reg::X1,
-            rs2: Reg::X2,
-            offset: GenericGpioMmio::SET_OFFSET as i32,
-        },
-        Instruction::Load {
-            width: LoadWidth::Word,
-            rd: Reg::X3,
-            rs1: Reg::X1,
-            offset: GenericGpioMmio::READ_OFFSET as i32,
-        },
-        Instruction::Store {
-            width: StoreWidth::Word,
-            rs1: Reg::X1,
-            rs2: Reg::X2,
-            offset: GenericGpioMmio::CLEAR_OFFSET as i32,
-        },
-        Instruction::Ebreak,
-    ]);
-
-    let mut bytes = Vec::with_capacity(insns.len() * 4);
-    for insn in insns {
-        let word = sw_rv32i_isa::encode_word(insn).map_err(|err| format!("{err:?}"))?;
-        bytes.extend_from_slice(&word.to_le_bytes());
-    }
-    Ok(bytes)
-}
-
-fn load_const(rd: Reg, value: u32) -> [Instruction; 2] {
-    let hi = value.wrapping_add(0x800) & 0xffff_f000;
-    let lo = value.wrapping_sub(hi) as i32;
-    [
-        Instruction::Lui { rd, imm: hi as i32 },
-        Instruction::OpImm {
-            op: ImmOp::Addi,
-            rd,
-            rs1: rd,
-            imm: lo,
-        },
-    ]
+fn blink_source(gpio_base: u32, led_mask: u32) -> String {
+    format!(
+        "li x1, 0x{gpio_base:08x}\n\
+         li x2, {led_mask}\n\
+         sw x2, {}(x1)\n\
+         lw x3, {}(x1)\n\
+         sw x2, {}(x1)\n\
+         ebreak\n",
+        GenericGpioMmio::SET_OFFSET,
+        GenericGpioMmio::READ_OFFSET,
+        GenericGpioMmio::CLEAR_OFFSET,
+    )
 }
 
 fn format_bytes(bytes: &[u8]) -> String {
